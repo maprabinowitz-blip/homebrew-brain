@@ -1,0 +1,12 @@
+{
+  "name": "homebrew-brain",
+  "version": "1.0.0",
+  "description": "A from-scratch AI chatbot with a shared learned memory on Cloudflare Workers + D1. No external AI, no API keys.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}
