@@ -10,7 +10,7 @@ binding = "ASSETS"
 # Your free database. After running:
 #   npx wrangler d1 create homebrew-brain-db
 # paste the database_id it prints below.
-[[d1_databases]]
+7c431d54-0148-4559-a7f4-20696ca773fe
 binding = "DB"
 database_name = "homebrew-brain-db"
 database_id = "PASTE_YOUR_DATABASE_ID_HERE"
