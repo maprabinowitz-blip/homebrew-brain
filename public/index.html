@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Homebrew Brain — a hand-coded AI with a shared memory</title>
+<style>
+  :root {
+    --bg: #10151B; --panel: #161D26; --line: #243140;
+    --text: #DCE6EE; --dim: #7A8B9A; --amber: #E8A33D;
+    --user: #1F2C3A; --userline: #2C3E52;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: 'Avenir Next', 'Segoe UI', system-ui, sans-serif;
+    display: flex; flex-direction: column; height: 100vh; height: 100dvh;
+  }
+  .mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 20px; border-bottom: 1px solid var(--line); flex-shrink: 0;
+  }
+  header h1 { font-size: 16px; font-weight: 700; margin: 0; letter-spacing: .02em; }
+  header h1 span { color: var(--amber); }
+  .sub { font-size: 10px; color: var(--dim); letter-spacing: .08em; margin-top: 2px; }
+  .hbtn {
+    background: transparent; border: 1px solid var(--line); color: var(--dim);
+    border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer;
+  }
+  .hbtn:hover { color: var(--text); }
+
+  #stats {
+    display: none; gap: 24px; flex-wrap: wrap; padding: 12px 20px;
+    border-bottom: 1px solid var(--line); font-size: 12px; flex-shrink: 0;
+  }
+  #stats.open { display: flex; }
+  .stat .lab { color: var(--dim); font-size: 9px; letter-spacing: .1em; }
+  .stat .val { color: var(--amber); font-size: 16px; font-weight: 700; }
+
+  #log {
+    flex: 1; overflow-y: auto; padding: 20px 16px;
+    display: flex; flex-direction: column; gap: 12px;
+    max-width: 760px; width: 100%; margin: 0 auto;
+  }
+  .msg { max-width: 84%; }
+  .msg.user { align-self: flex-end; }
+  .msg.bot { align-self: flex-start; }
+  .badge { font-size: 9px; letter-spacing: .1em; margin-bottom: 3px; }
+  .bubble {
+    padding: 10px 14px; font-size: 14.5px; line-height: 1.55;
+    white-space: pre-wrap; word-break: break-word;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px 12px 12px 3px;
+  }
+  .msg.user .bubble {
+    background: var(--user); border-color: var(--userline);
+    border-radius: 12px 12px 3px 12px;
+  }
+
+  footer { border-top: 1px solid var(--line); padding: 14px 16px 18px; flex-shrink: 0; }
+  .row { max-width: 760px; margin: 0 auto; display: flex; gap: 10px; }
+  #inp {
+    flex: 1; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 12px 14px; font-size: 14.5px;
+    color: var(--text); outline: none; font-family: inherit;
+  }
+  #inp.teach { border-color: var(--amber); }
+  #sendBtn {
+    background: var(--amber); color: #1A1208; border: none; border-radius: 10px;
+    padding: 0 20px; font-weight: 700; font-size: 14px; cursor: pointer;
+  }
+  .hint {
+    max-width: 760px; margin: 8px auto 0; font-size: 10px; color: var(--dim);
+    text-align: center; letter-spacing: .05em;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1><span>&#9673;</span> Homebrew Brain</h1>
+    <div class="sub mono">HAND-CODED AI &middot; ONE SHARED MEMORY FOR ALL VISITORS</div>
+  </div>
+  <button class="hbtn" id="statsBtn">Brain stats</button>
+</header>
+
+<div id="stats" class="mono">
+  <div class="stat"><div class="lab">HARD-CODED RULES</div><div class="val" id="sRules">0</div></div>
+  <div class="stat"><div class="lab">FACTS TAUGHT BY EVERYONE</div><div class="val" id="sFacts">0</div></div>
+  <div class="stat"><div class="lab">SHARED VOCABULARY</div><div class="val" id="sVocab">0</div></div>
+  <div class="stat"><div class="lab">DATABASE</div><div class="val">Cloudflare D1</div></div>
+</div>
+
+<div id="log"></div>
+
+<footer>
+  <div class="row">
+    <input id="inp" placeholder="Say something, or: learn: question => answer" autocomplete="off" />
+    <button id="sendBtn">Send</button>
+  </div>
+  <div class="hint mono">EVERYTHING ANYONE TEACHES ME IS SHARED WITH ALL VISITORS</div>
+</footer>
+
+<script>
+/* =====================================================================
+   HOMEBREW BRAIN — frontend. The thinking happens here; the shared
+   memory lives on the server in db.json. No external AI, no API keys.
+   ===================================================================== */
+
+/* ---------- text utilities ---------- */
+function normalize(t){return t.toLowerCase().replace(/[^a-z0-9'\s]/g," ").replace(/\s+/g," ").trim()}
+function tokenize(t){return normalize(t).split(" ").filter(Boolean)}
+
+/* Stopwords: filler words that carry no meaning. Ignoring them means
+   "what's the best pizza??" and "best pizza" match perfectly. */
+const STOPWORDS=new Set("a an the is are was were be been being am i you u he she it we they me my your his her its our their this that these those what whats who whos whose how when where why which do does did doing done have has had having will would can could should shall may might must of to in on at by for with about as from and or but if then than so not no yes ok okay please tell say me hey".split(" "));
+
+/* A tiny stemmer: strips suffixes then a trailing silent e, so
+   "make" / "makes" / "making" all reduce to the same stem. */
+function stem(w){
+  if(w.length>5&&w.endsWith("ing"))w=w.slice(0,-3);
+  else if(w.length>4&&w.endsWith("ed"))w=w.slice(0,-2);
+  else if(w.length>3&&w.endsWith("s")&&!w.endsWith("ss"))w=w.slice(0,-1);
+  if(w.length>3&&w.endsWith("e"))w=w.slice(0,-1);
+  return w;
+}
+
+/* Reduce a sentence to its meaningful stems. If everything was a
+   stopword ("who are you"), fall back to the raw tokens. */
+function keywords(t){
+  const toks=tokenize(t).map(stem);
+  const kept=toks.filter(w=>!STOPWORDS.has(w));
+  return kept.length?kept:toks;
+}
+
+/* ---------- memory engine: TF-IDF + inverted index ----------
+   TF-IDF weighting makes rare words count more than common ones
+   ("pizza" matters more than "best"). The inverted index means we
+   only score facts that share at least one keyword with the input,
+   so matching stays instant even with thousands of facts. */
+function buildIndex(memory){
+  const docs=memory.map(f=>keywords(f.q));
+  const df={};
+  docs.forEach(d=>new Set(d).forEach(w=>df[w]=(df[w]||0)+1));
+  const N=Math.max(docs.length,1);
+  const idf=w=>Math.log(1+N/(df[w]||1));
+  const inverted={};
+  const vecs=docs.map((d,i)=>{
+    const tf={};d.forEach(w=>tf[w]=(tf[w]||0)+1);
+    const vec={};let mag=0;
+    for(const w in tf){
+      const v=tf[w]*idf(w);
+      vec[w]=v;mag+=v*v;
+      (inverted[w]=inverted[w]||new Set()).add(i);
+    }
+    return {vec,mag:Math.sqrt(mag)||1};
+  });
+  return {idf,inverted,vecs};
+}
+
+function bestMatch(input,memory,index){
+  const q=keywords(input);
+  if(!q.length||!memory.length)return {best:null,score:0};
+  const tf={};q.forEach(w=>tf[w]=(tf[w]||0)+1);
+  const qvec={};let qmag=0;
+  for(const w in tf){const v=tf[w]*index.idf(w);qvec[w]=v;qmag+=v*v}
+  qmag=Math.sqrt(qmag)||1;
+  const candidates=new Set();
+  for(const w in qvec)(index.inverted[w]||new Set()).forEach(i=>candidates.add(i));
+  let best=null,bestScore=0;
+  candidates.forEach(i=>{
+    const {vec,mag}=index.vecs[i];
+    let dot=0;
+    for(const w in qvec)if(vec[w])dot+=qvec[w]*vec[w];
+    const s=dot/(qmag*mag);
+    if(s>bestScore){bestScore=s;best=memory[i]}
+  });
+  return {best,score:bestScore};
+}
+
+const REFLECTIONS={i:"you",me:"you",my:"your",mine:"yours",am:"are",you:"I",your:"my",yours:"mine","i'm":"you're","i'd":"you'd","i've":"you've",myself:"yourself",yourself:"myself",was:"were"};
+function reflect(t){return tokenize(t).map(w=>REFLECTIONS[w]||w).join(" ")}
+function pick(a){return a[Math.floor(Math.random()*a.length)]}
+
+/* ---------- rules (edit me! add your own!) ---------- */
+const RULES=[
+  {pattern:/\b(hello|hi|hey|yo|howdy|good (morning|afternoon|evening))\b/,responses:["Hey there! I'm a homemade brain with one shared memory — everyone who visits teaches the same me.","Hello! Ask me something, or teach me something new for everyone.","Hi! I only know my rules plus whatever visitors have taught me."]},
+  {pattern:/\b(bye|goodbye|see you|gotta go|good night)\b/,responses:["Goodbye! Whatever you taught me, the next visitor inherits.","See you! The shared brain remembers."]},
+  {pattern:/how are you/,responses:["Running at full capacity — all 0 neurons firing nicely.","I'm a few hundred lines of JavaScript and one JSON file, and honestly? Thriving."]},
+  {pattern:/\b(what is|what's) your name\b|\bwho are you\b/,responses:["I'm Homebrew Brain — an AI built from scratch with rules, a shared learned memory, and a Markov generator. No big models behind me."]},
+  {pattern:/\bare you (a |an )?(real )?(ai|robot|human|chatgpt|claude|gpt)\b/,responses:["I'm 100% homemade. No ChatGPT, no Claude — just pattern matching, similarity math, and what visitors teach me."]},
+  {pattern:/\bi (?:am|m|feel) (.+)/,fn:m=>`Why are you ${reflect(m[1])}?`},
+  {pattern:/\bi (?:want|need) (.+)/,fn:m=>`What would it mean to you if you got ${reflect(m[1])}?`},
+  {pattern:/\bbecause (.+)/,fn:m=>`Is that the real reason — ${reflect(m[1])}?`},
+  {pattern:/\b(thanks|thank you)\b/,responses:["You're welcome!","Anytime — teaching me counts as thanks too."]},
+  {pattern:/\bwhat can you do\b|\bhelp\b/,responses:["I can chat using my rules, answer anything anyone has taught me, do basic math like 12*(3+4), look up facts on Wikipedia (try: what is a quasar), think with an open-source AI model when I am stumped, and improvise with my Markov generator. Teach me with: learn: question => answer"]},
+  {pattern:/\bwhat time is it\b|\bcurrent time\b/,fn:()=>`My clock says ${new Date().toLocaleTimeString()}.`},
+];
+
+/* ---------- safe math ---------- */
+function tryMath(text){
+  const m=text.match(/(?:^|\s)((?:\d+\.?\d*|[+\-*/().\s])+)$/);
+  if(!m)return null;
+  const expr=m[1].trim();
+  if(!/\d/.test(expr)||!/[+\-*/]/.test(expr))return null;
+  if(/[^0-9+\-*/().\s]/.test(expr))return null;
+  try{
+    const r=Function('"use strict";return ('+expr+')')();
+    if(typeof r==="number"&&isFinite(r))return expr+" = "+(Math.round(r*10000)/10000);
+  }catch(e){}
+  return null;
+}
+
+/* ---------- markov generator ---------- */
+const SEED_CORPUS=`
+I think learning is the most interesting thing a program can do.
+Every word I say comes from patterns in text I have seen before.
+You can teach me anything and every visitor after you will know it too.
+A brain made of rules is simple but a brain that learns can surprise you.
+The more people talk to me the more words I have to play with.
+Ideas connect to other ideas and that is how sentences grow.
+I am small but everything I know was given to me by people like you.
+`;
+
+function buildMarkov(texts){
+  const chain={},starters=[];
+  texts.forEach(t=>{
+    const w=tokenize(t);
+    if(w.length<2)return;
+    starters.push(w[0]);
+    for(let i=0;i<w.length-1;i++)(chain[w[i]]=chain[w[i]]||[]).push(w[i+1]);
+  });
+  return {chain,starters};
+}
+function markovGenerate(mk,seed){
+  let w=seed&&mk.chain[seed]?seed:pick(mk.starters);
+  if(!w)return null;
+  const out=[w];
+  for(let i=0;i<18;i++){
+    const n=mk.chain[w];if(!n)break;
+    w=pick(n);out.push(w);
+    if(out.length>8&&Math.random()<0.2)break;
+  }
+  if(out.length<4)return null;
+  const s=out.join(" ");
+  return s.charAt(0).toUpperCase()+s.slice(1)+".";
+}
+
+/* ---------- web sight: free, keyless Wikipedia lookup ----------
+   When someone asks a factual question that memory, rules, and math
+   can't answer, the brain looks it up on Wikipedia's public API.
+   No API key required. */
+function extractTopic(input){
+  const n=input.trim().replace(/[?!.]+\s*$/,"");
+  const m=n.match(/^(?:what|who)(?:'s| is| are| was| were) (?:a |an |the )?(.+)$/i)
+       || n.match(/^(?:tell me about|define|look up|search for|search|wiki) (?:a |an |the )?(.+)$/i)
+       || n.match(/^(?:where is|when was|when did|when is) (?:the )?(.+)$/i);
+  return m?m[1].trim():null;
+}
+
+async function wikiLookup(topic){
+  try{
+    const r=await fetch("https://en.wikipedia.org/api/rest_v1/page/summary/"+encodeURIComponent(topic),{headers:{accept:"application/json"}});
+    if(!r.ok)return null;
+    const d=await r.json();
+    if(!d.extract||(d.type&&d.type.includes("disambiguation")))return null;
+    const sentences=d.extract.match(/[^.!?]+[.!?]+(?:\s|$)/g)||[d.extract];
+    return sentences.slice(0,2).join("").trim()+" (via Wikipedia)";
+  }catch(e){return null}
+}
+
+/* ---------- the digestive system: open-source AI on Cloudflare ----
+   When every homemade stage comes up empty, ask the Llama model
+   running on YOUR Cloudflare account (free daily allowance, no key).
+   If it's unavailable or the quota is spent, we fall back gracefully. */
+async function askAI(q,context){
+  try{
+    const r=await fetch("/api/ai",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({q,context:context||""}),
+    });
+    const d=await r.json();
+    if(d.ok&&d.answer)return d.answer.trim();
+  }catch(e){}
+  return null;
+}
+
+/* ---------- the brain ---------- */
+async function think(input,memory,memIndex,markov,pendingTeach){
+  if(pendingTeach){
+    return {kind:"learned",text:`Got it. Now EVERY visitor who asks "${pendingTeach}" gets that answer.`,save:{q:pendingTeach,a:input}};
+  }
+  const teach=input.match(/^learn:\s*(.+?)\s*=>\s*(.+)$/i);
+  if(teach){
+    return {kind:"learned",text:`Learned it — for everyone! Ask me "${teach[1].trim()}" and see.`,save:{q:teach[1].trim(),a:teach[2].trim()}};
+  }
+  const {best,score}=bestMatch(input,memory,memIndex);
+  if(best&&score>=0.5)return {kind:"memory",text:best.a};
+
+  const norm=normalize(input);
+  for(const rule of RULES){
+    const m=norm.match(rule.pattern);
+    if(m)return {kind:"rule",text:rule.fn?rule.fn(m):pick(rule.responses)};
+  }
+
+  const math=tryMath(input);
+  if(math)return {kind:"math",text:math};
+
+  const topic=extractTopic(input);
+  let wikiContext="";
+  if(topic){
+    const wiki=await wikiLookup(topic);
+    if(wiki)return {kind:"web",text:wiki};
+  }
+
+  // last resort before improvising: the open-source model on Cloudflare,
+  // with the best (below-threshold) memory match passed along as a hint
+  const aiContext=best&&score>=0.25?`A visitor once taught: Q "${best.q}" A "${best.a}".`:"";
+  const ai=await askAI(input,aiContext);
+  if(ai)return {kind:"ai",text:ai};
+
+  if(Math.random()<0.5){
+    const seed=tokenize(input).find(w=>markov.chain[w]);
+    const gen=markovGenerate(markov,seed);
+    if(gen)return {kind:"generated",text:gen};
+  }
+
+  return {kind:"ask",teach:input,text:pick([
+    "Nobody has taught me that yet. What should I say when someone asks that? (Your next message becomes my answer — for everyone.)",
+    "That's outside the shared brain so far — teach me! Type the answer and every future visitor will know it.",
+    "New territory. Tell me the right response and it goes into the shared database.",
+  ])};
+}
+
+/* ---------- app state & UI ---------- */
+const KIND_BADGE={rule:["RULE","#5FB4D9"],memory:["SHARED MEMORY","#7CC97C"],math:["MATH","#C792EA"],web:["WEB · WIKIPEDIA","#56C2C0"],ai:["AI · LLAMA ON YOUR CLOUDFLARE","#E06FAE"],generated:["GENERATED","#E8A33D"],ask:["LEARNING","#D96C5F"],learned:["SAVED FOR EVERYONE","#7CC97C"]};
+
+let memory=[];
+let pendingTeach=null;
+const userHistory=[];
+
+const log=document.getElementById("log");
+const inp=document.getElementById("inp");
+
+function addMsg(role,text,kind){
+  const div=document.createElement("div");
+  div.className="msg "+role;
+  if(role==="bot"&&kind&&KIND_BADGE[kind]){
+    const b=document.createElement("div");
+    b.className="badge mono";
+    b.textContent="\u25B8 "+KIND_BADGE[kind][0];
+    b.style.color=KIND_BADGE[kind][1];
+    div.appendChild(b);
+  }
+  const bub=document.createElement("div");
+  bub.className="bubble";
+  bub.textContent=text;
+  div.appendChild(bub);
+  log.appendChild(div);
+  log.scrollTop=log.scrollHeight;
+}
+
+function refreshStats(){
+  document.getElementById("sRules").textContent=RULES.length;
+  document.getElementById("sFacts").textContent=memory.length;
+  const vocab=new Set(memory.flatMap(m=>tokenize(m.q+" "+m.a))).size;
+  document.getElementById("sVocab").textContent=vocab;
+}
+
+let memIndex=buildIndex([]);
+let lastIndexedCount=-1;
+
+async function syncMemory(){
+  try{
+    const r=await fetch("/api/memory");
+    const data=await r.json();
+    if(Array.isArray(data.facts))memory=data.facts;
+    refreshStats();
+  }catch(e){ /* offline or server waking up — keep last known memory */ }
+  // rebuild the search index only when the fact count changed
+  if(memory.length!==lastIndexedCount){
+    memIndex=buildIndex(memory);
+    lastIndexedCount=memory.length;
+  }
+}
+
+async function teachServer(fact){
+  try{
+    await fetch("/api/teach",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(fact),
+    });
+  }catch(e){}
+}
+
+async function send(){
+  const text=inp.value.trim();
+  if(!text)return;
+  inp.value="";
+  inp.classList.remove("teach");
+  addMsg("user",text);
+  userHistory.push(text);
+
+  // pull the latest shared memory so we see what others just taught
+  await syncMemory();
+
+  setTimeout(async ()=>{
+    const corpus=[...SEED_CORPUS.split("\n"),...memory.map(m=>m.a),...userHistory];
+    const markov=buildMarkov(corpus);
+    const result=await think(text,memory,memIndex,markov,pendingTeach);
+    if(result.save){
+      memory.push(result.save);
+      memIndex=buildIndex(memory);
+      lastIndexedCount=memory.length;
+      teachServer(result.save);
+    }
+    pendingTeach=result.teach||null;
+    if(pendingTeach){
+      inp.placeholder="Type the answer to teach everyone\u2026";
+      inp.classList.add("teach");
+    }else{
+      inp.placeholder="Say something, or: learn: question => answer";
+    }
+    addMsg("bot",result.text,result.kind);
+    refreshStats();
+  },350+Math.random()*450);
+}
+
+document.getElementById("sendBtn").addEventListener("click",send);
+inp.addEventListener("keydown",e=>{if(e.key==="Enter")send()});
+
+document.getElementById("statsBtn").addEventListener("click",()=>{
+  const s=document.getElementById("stats");
+  s.classList.toggle("open");
+  document.getElementById("statsBtn").textContent=s.classList.contains("open")?"Hide brain":"Brain stats";
+});
+
+addMsg("bot","I'm Homebrew Brain \u2014 one shared mind that every visitor teaches. Say hi, ask me math, or teach me with: learn: question => answer","rule");
+syncMemory();
+</script>
+</body>
+</html>
