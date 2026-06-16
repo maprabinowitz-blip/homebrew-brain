@@ -1,21 +1,16 @@
 name = "homebrew-brain"
 main = "src/index.js"
 compatibility_date = "2026-01-01"
-
-# Serves everything in ./public (the chatbot UI)
+ 
 [assets]
 directory = "./public"
 binding = "ASSETS"
-
-# Your free database. After running:
-#   npx wrangler d1 create homebrew-brain-db
-# paste the database_id it prints below.
-7c431d54-0148-4559-a7f4-20696ca773fe
+ 
+[[d1_databases]]
 binding = "DB"
 database_name = "homebrew-brain-db"
-database_id = "PASTE_YOUR_DATABASE_ID_HERE"
-
-# Workers AI: runs an open-source model (Llama) on Cloudflare's GPUs.
-# No API key needed — it's tied to your account, like the database.
+database_id = "7c431d54-0148-4559-a7f4-20696ca773fe"
+ 
 [ai]
 binding = "AI"
+ 
