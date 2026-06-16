@@ -1,16 +1,15 @@
 name = "homebrew-brain"
-main = "src/index.js"
+main = "index.js"
 compatibility_date = "2026-01-01"
- 
+
 [assets]
 directory = "./public"
 binding = "ASSETS"
- 
+
 [[d1_databases]]
 binding = "DB"
 database_name = "homebrew-brain-db"
 database_id = "7c431d54-0148-4559-a7f4-20696ca773fe"
- 
+
 [ai]
 binding = "AI"
- 
